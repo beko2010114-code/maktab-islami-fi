@@ -19,108 +19,156 @@ build_apk:
 
   before_script:
     - apt-get update -y
-    - apt-get install -y unzip wget git openjdk-17-jdk findutils
+    - apt-get install -y unzip wget openjdk-17-jdk findutils
     - java -version
 
+    - wget -q https://services.gradle.org/distributions/gradle-8.7-bin.zip
+    - unzip -q gradle-8.7-bin.zip -d /opt
+    - export PATH="/opt/gradle-8.7/bin:$PATH"
+    - gradle --version
+
   script:
-    # ==========================================
-    # 1. البحث عن ملف ZIP
-    # ==========================================
+
+    # 1. البحث عن ZIP
     - |
       ZIP_FILE=$(find "$CI_PROJECT_DIR" -maxdepth 1 -type f -iname "*.zip" | head -n 1)
 
       if [ -z "$ZIP_FILE" ]; then
-        echo "ERROR: لم يتم العثور على ملف ZIP"
+        echo "ERROR: ZIP file not found"
         exit 1
       fi
 
-      echo "ZIP found:"
-      echo "$ZIP_FILE"
+      echo "ZIP: $ZIP_FILE"
 
-    # ==========================================
     # 2. فك الضغط
-    # ==========================================
     - |
       rm -rf extracted_project
       mkdir -p extracted_project
 
       unzip -q "$ZIP_FILE" -d extracted_project
 
-      echo "ZIP extracted successfully."
+      echo "ZIP extracted successfully"
 
-    # ==========================================
-    # 3. العثور على مشروع Android
-    # ==========================================
+    # 3. البحث عن مشروع Android
     - |
-      echo "Searching for Gradle Android project..."
+      echo "Searching for Android project..."
 
-      GRADLEW=$(find extracted_project \
+      SETTINGS=$(find extracted_project \
         -type f \
-        -name "gradlew" \
+        \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
         -print -quit)
 
-      if [ -z "$GRADLEW" ]; then
-        echo "ERROR: لم يتم العثور على gradlew داخل ZIP"
-        echo "محتويات المشروع:"
-        find extracted_project -maxdepth 4 -type f | head -200
+      BUILD=$(find extracted_project \
+        -type f \
+        \( -name "build.gradle" -o -name "build.gradle.kts" \) \
+        -print -quit)
+
+      if [ -z "$SETTINGS" ] && [ -z "$BUILD" ]; then
+        echo "ERROR: Android Gradle project not found"
+        echo "Extracted files:"
+        find extracted_project -maxdepth 5 -type f | head -300
         exit 1
       fi
 
-      PROJECT_DIR=$(dirname "$GRADLEW")
-
-      echo "Gradle wrapper:"
-      echo "$GRADLEW"
+      if [ -n "$SETTINGS" ]; then
+        PROJECT_DIR=$(dirname "$SETTINGS")
+      else
+        PROJECT_DIR=$(dirname "$BUILD")
+      fi
 
       echo "Android project:"
       echo "$PROJECT_DIR"
 
       echo "PROJECT_DIR=$PROJECT_DIR" > project.env
 
-    # ==========================================
-    # 4. تجهيز Gradle
-    # ==========================================
+    # 4. فحص المشروع
     - |
       source project.env
 
       cd "$PROJECT_DIR"
 
-      chmod +x gradlew
+      echo "Project files:"
+      ls -la
 
-      echo "Gradle version:"
-      ./gradlew --version
+      echo "Gradle files:"
+      find . -maxdepth 2 -type f \
+        \( -name "*.gradle" -o -name "*.gradle.kts" \) \
+        -print
 
-    # ==========================================
-    # 5. بناء Debug APK
-    # ==========================================
+    # 5. البحث عن مجلد app
+    - |
+      source project.env
+
+      if [ ! -d "$PROJECT_DIR/app" ]; then
+        echo "WARNING: app directory not directly found."
+
+        APP_DIR=$(find "$PROJECT_DIR" \
+          -type d \
+          -name app \
+          -print -quit)
+
+        if [ -z "$APP_DIR" ]; then
+          echo "ERROR: Android app module not found"
+          exit 1
+        fi
+
+        echo "App module found:"
+        echo "$APP_DIR"
+      fi
+
+    # 6. تجهيز Offline assets
+    - |
+      source project.env
+
+      mkdir -p "$PROJECT_DIR/app/src/main/assets/data"
+
+      cat > "$PROJECT_DIR/app/src/main/assets/data/BUILD_INFO.txt" <<'EOF'
+Maktab Islami 4.7
+
+Offline Islamic Library
+
+Build system:
+GitLab CI
+
+Java:
+17
+
+Gradle:
+8.7
+
+This file is generated during CI.
+EOF
+
+    # 7. بناء APK
     - |
       source project.env
 
       cd "$PROJECT_DIR"
 
-      ./gradlew clean assembleDebug \
+      echo "Starting Gradle build..."
+
+      gradle clean assembleDebug \
         --no-daemon \
         --stacktrace
 
-    # ==========================================
-    # 6. البحث عن APK
-    # ==========================================
+    # 8. البحث عن APK
     - |
       source project.env
 
-      echo "Searching for generated APK..."
+      echo "Searching for APK..."
 
-      find "$PROJECT_DIR/app/build/outputs" \
+      find "$PROJECT_DIR" \
         -type f \
         -name "*.apk" \
         -print
 
-      APK=$(find "$PROJECT_DIR/app/build/outputs" \
+      APK=$(find "$PROJECT_DIR" \
         -type f \
-        -name "*.apk" \
+        -path "*/build/outputs/apk/*.apk" \
         -print -quit)
 
       if [ -z "$APK" ]; then
-        echo "ERROR: لم يتم إنشاء APK"
+        echo "ERROR: APK was not generated"
         exit 1
       fi
 
@@ -128,7 +176,9 @@ build_apk:
       ls -lh "$APK"
 
       mkdir -p artifacts
-      cp "$APK" artifacts/Maktab-Islami-4.7-debug.apk
+
+      cp "$APK" \
+        artifacts/Maktab-Islami-4.7-debug.apk
 
   artifacts:
     name: Maktab-Islami-4.7
@@ -137,7 +187,5 @@ build_apk:
     expire_in: 30 days
 
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-    - if: '$CI_COMMIT_BRANCH == "master"'
-    - if: '$CI_PIPELINE_SOURCE == "web"'
     - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
