@@ -1,4 +1,4 @@
-name: Unpack Maktab Islami 5.3 Project
+name: Unpack Islami Project
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   unpack:
-    name: Extract Android project into repository
+    name: Extract Islami Android project
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -23,36 +23,38 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y unzip rsync findutils
 
-      - name: Locate ZIP
+      - name: Locate Islami ZIP
         id: zip
         shell: bash
         run: |
           set -euo pipefail
 
-          ZIP=$(find . -maxdepth 2 -type f -iname '*.zip' \
-            ! -path './.git/*' -print -quit)
+          ZIP=$(find . -maxdepth 2 -type f \
+            -iname 'Islami_Final_NoData_v10.zip' \
+            ! -path './.git/*' \
+            -print -quit)
 
           if [ -z "$ZIP" ]; then
-            echo "ERROR: No ZIP file found."
+            echo "ERROR: Islami_Final_NoData_v10.zip not found."
             exit 1
           fi
 
           echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
           echo "Using: $ZIP"
 
-      - name: Extract ZIP
+      - name: Extract Islami ZIP
         shell: bash
         run: |
           set -euo pipefail
 
-          rm -rf "$RUNNER_TEMP/maktab-extract"
-          mkdir -p "$RUNNER_TEMP/maktab-extract"
+          rm -rf "$RUNNER_TEMP/islami-extract"
+          mkdir -p "$RUNNER_TEMP/islami-extract"
 
           unzip -q "${{ steps.zip.outputs.zip }}" \
-            -d "$RUNNER_TEMP/maktab-extract"
+            -d "$RUNNER_TEMP/islami-extract"
 
           echo "Extracted files:"
-          find "$RUNNER_TEMP/maktab-extract" -type f | sort | head -300
+          find "$RUNNER_TEMP/islami-extract" -type f | sort | head -300
 
       - name: Locate Android project
         id: project
@@ -71,59 +73,73 @@ jobs:
               break
             fi
           done < <(
-            find "$RUNNER_TEMP/maktab-extract" -type f \
+            find "$RUNNER_TEMP/islami-extract" -type f \
               \( -name settings.gradle -o -name settings.gradle.kts \) \
               -print | sort
           )
 
           if [ -z "$PROJECT" ]; then
-            echo "ERROR: Complete Android/Gradle project not found in ZIP."
+            echo "ERROR: Android project not found."
             exit 1
           fi
 
           echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
           echo "Android project: $PROJECT"
 
-      - name: Replace repository root with project files
+      - name: Replace repository root
         shell: bash
         run: |
           set -euo pipefail
 
           PROJECT="${{ steps.project.outputs.project }}"
 
-          rsync -a --delete \
+          rsync -a \
             --exclude='.git/' \
             --exclude='.github/' \
             "$PROJECT/" ./
 
-          echo "Repository root after extraction:"
+          echo "Repository after extraction:"
           find . -maxdepth 3 -type f \
             ! -path './.git/*' | sort | head -400
 
-      - name: Validate Android Gradle structure
+      - name: Check Android project
         shell: bash
         run: |
           set -euo pipefail
 
-          test -f settings.gradle || \
-          test -f settings.gradle.kts
-
-          test -f app/build.gradle || \
-          test -f app/build.gradle.kts
-
-          test -f app/src/main/AndroidManifest.xml
-
-          test -f gradlew || {
-            echo "ERROR: gradlew not found."
+          if [ -f settings.gradle.kts ]; then
+            echo "settings.gradle.kts: PASS"
+          elif [ -f settings.gradle ]; then
+            echo "settings.gradle: PASS"
+          else
+            echo "ERROR: settings.gradle(.kts) not found."
             exit 1
-          }
+          fi
 
-          chmod +x gradlew
+          if [ -f app/build.gradle.kts ]; then
+            echo "app/build.gradle.kts: PASS"
+          elif [ -f app/build.gradle ]; then
+            echo "app/build.gradle: PASS"
+          else
+            echo "ERROR: app/build.gradle(.kts) not found."
+            exit 1
+          fi
 
-          echo "Android/Gradle structure: PASS"
+          if [ -f app/src/main/AndroidManifest.xml ]; then
+            echo "AndroidManifest.xml: PASS"
+          else
+            echo "ERROR: AndroidManifest.xml not found."
+            exit 1
+          fi
 
-          echo "Gradle wrapper:"
-          ./gradlew --version | head -20
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+            echo "Gradle wrapper: FOUND"
+            ./gradlew --version | head -20
+          else
+            echo "WARNING: gradlew not found."
+            echo "The project was extracted, but Gradle Wrapper must be added before building."
+          fi
 
       - name: Remove source ZIP
         shell: bash
@@ -132,9 +148,9 @@ jobs:
 
           rm -f "${{ steps.zip.outputs.zip }}"
 
-          echo "Source ZIP removed successfully."
+          echo "Source ZIP removed."
 
-      - name: Commit extracted project
+      - name: Commit Islami project
         shell: bash
         run: |
           set -euo pipefail
@@ -150,6 +166,6 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Extract Maktab Islami 5.3 Android project"
+          git commit -m "Extract Islami Android project"
 
           git push origin HEAD:main
