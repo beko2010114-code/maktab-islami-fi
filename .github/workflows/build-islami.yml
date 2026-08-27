@@ -8,11 +8,12 @@ permissions:
 
 jobs:
   build:
-    name: Build Islami Android APK
+    name: Build Islami APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -27,51 +28,46 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Show project structure
+      - name: Check Android project
         shell: bash
         run: |
-          echo "========== PROJECT STRUCTURE =========="
-          find . -maxdepth 4 -type f \
-            ! -path './.git/*' | sort | head -500
+          set -e
 
-      - name: Validate Android project
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Checking Android project..."
+          echo "======================================"
+          echo "Checking Islami Android project"
+          echo "======================================"
 
           if [ -f settings.gradle.kts ]; then
-            echo "settings.gradle.kts: PASS"
+            echo "OK: settings.gradle.kts"
           elif [ -f settings.gradle ]; then
-            echo "settings.gradle: PASS"
+            echo "OK: settings.gradle"
           else
-            echo "ERROR: settings.gradle(.kts) not found."
+            echo "ERROR: settings.gradle(.kts) not found"
             exit 1
           fi
 
           if [ -f build.gradle.kts ]; then
-            echo "build.gradle.kts: PASS"
+            echo "OK: build.gradle.kts"
           elif [ -f build.gradle ]; then
-            echo "build.gradle: PASS"
+            echo "OK: build.gradle"
           else
-            echo "ERROR: build.gradle(.kts) not found."
+            echo "ERROR: build.gradle(.kts) not found"
             exit 1
           fi
 
           if [ -f app/build.gradle.kts ]; then
-            echo "app/build.gradle.kts: PASS"
+            echo "OK: app/build.gradle.kts"
           elif [ -f app/build.gradle ]; then
-            echo "app/build.gradle: PASS"
+            echo "OK: app/build.gradle"
           else
-            echo "ERROR: app/build.gradle(.kts) not found."
+            echo "ERROR: app/build.gradle(.kts) not found"
             exit 1
           fi
 
           if [ -f app/src/main/AndroidManifest.xml ]; then
-            echo "AndroidManifest.xml: PASS"
+            echo "OK: AndroidManifest.xml"
           else
-            echo "ERROR: AndroidManifest.xml not found."
+            echo "ERROR: AndroidManifest.xml not found"
             exit 1
           fi
 
@@ -81,59 +77,93 @@ jobs:
       - name: Show Java and Gradle versions
         shell: bash
         run: |
-          echo "========== JAVA =========="
+          echo "======================================"
+          echo "Java version"
+          echo "======================================"
           java -version
 
           echo ""
-          echo "========== GRADLE =========="
+          echo "======================================"
+          echo "Gradle version"
+          echo "======================================"
           gradle --version
 
       - name: Clean project
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          echo "Cleaning project..."
+          echo "======================================"
+          echo "Cleaning project"
+          echo "======================================"
 
-          gradle --no-daemon \
-            clean
+          gradle clean --no-daemon
 
       - name: Build Debug APK
         shell: bash
         run: |
           set -o pipefail
 
-          echo "========================================"
-          echo "        BUILDING ISLAMI DEBUG APK"
-          echo "========================================"
+          echo "======================================"
+          echo "Building Islami Debug APK"
+          echo "======================================"
 
-          gradle --no-daemon \
+          gradle assembleDebug \
+            --no-daemon \
             --stacktrace \
             --info \
-            assembleDebug 2>&1 | tee build.log
+            2>&1 | tee build.log
 
-      - name: Show build error
-        if: failure()
+      - name: Show APK files
+        if: success()
         shell: bash
         run: |
-          echo ""
-          echo "========================================"
-          echo "             BUILD ERROR"
-          echo "========================================"
+          echo "======================================"
+          echo "Searching for APK"
+          echo "======================================"
+
+          find app/build/outputs/apk \
+            -type f \
+            -name "*.apk" \
+            -print
+
+      - name: Prepare APK
+        if: success()
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p release
+
+          APK=$(find app/build/outputs/apk \
+            -type f \
+            -name "*.apk" \
+            -print -quit)
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK was not generated"
+            exit 1
+          fi
+
+          echo "Found APK:"
+          echo "$APK"
+
+          cp "$APK" release/Islami-debug.apk
 
           echo ""
-          echo "---------- IMPORTANT ERROR ----------"
+          echo "APK ready:"
+          ls -lh release/Islami-debug.apk
 
-          grep -n -B 20 -A 40 \
-            -E "What went wrong|Execution failed|Could not resolve|Could not find|e: |error:|FAILURE:" \
-            build.log | tail -350 || true
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Islami-APK
+          path: release/Islami-debug.apk
+          if-no-files-found: error
+          retention-days: 30
 
-          echo ""
-          echo "---------- LAST 200 LINES ----------"
-
-          tail -200 build.log
-
-      - name: Save build log
+      - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -141,6 +171,3 @@ jobs:
           path: build.log
           if-no-files-found: ignore
           retention-days: 7
-
-      - name: Find APK
-        id: apk
