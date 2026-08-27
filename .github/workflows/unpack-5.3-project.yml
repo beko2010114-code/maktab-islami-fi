@@ -1,171 +1,96 @@
-name: Unpack Islami Project
+name: Build Islami APK
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  unpack:
-    name: Extract Islami Android project
+  build:
+    name: Build Islami Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
         with:
-          fetch-depth: 0
+          distribution: temurin
+          java-version: '17'
 
-      - name: Install tools
+      - name: Setup Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Show project structure
         run: |
-          sudo apt-get update
-          sudo apt-get install -y unzip rsync findutils
+          echo "Project files:"
+          find . -maxdepth 4 -type f \
+            ! -path './.git/*' | sort
 
-      - name: Locate Islami ZIP
-        id: zip
+      - name: Validate Android project
         shell: bash
         run: |
           set -euo pipefail
 
-          ZIP=$(find . -maxdepth 2 -type f \
-            -iname 'Islami_Final_NoData_v10.zip' \
-            ! -path './.git/*' \
+          test -f settings.gradle.kts
+          test -f build.gradle.kts
+          test -f app/build.gradle.kts
+          test -f app/src/main/AndroidManifest.xml
+
+          echo "Android project structure: PASS"
+
+      - name: Build Debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gradle --no-daemon \
+            --stacktrace \
+            assembleDebug
+
+      - name: Find APK
+        id: apk
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK=$(find app/build/outputs/apk \
+            -type f \
+            -name '*.apk' \
             -print -quit)
 
-          if [ -z "$ZIP" ]; then
-            echo "ERROR: Islami_Final_NoData_v10.zip not found."
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK was not generated."
             exit 1
           fi
 
-          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
-          echo "Using: $ZIP"
+          echo "APK found:"
+          echo "$APK"
 
-      - name: Extract Islami ZIP
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
+
+      - name: Rename APK
         shell: bash
         run: |
           set -euo pipefail
 
-          rm -rf "$RUNNER_TEMP/islami-extract"
-          mkdir -p "$RUNNER_TEMP/islami-extract"
+          mkdir -p release
 
-          unzip -q "${{ steps.zip.outputs.zip }}" \
-            -d "$RUNNER_TEMP/islami-extract"
+          cp "${{ steps.apk.outputs.path }}" \
+            "release/Islami-debug.apk"
 
-          echo "Extracted files:"
-          find "$RUNNER_TEMP/islami-extract" -type f | sort | head -300
+          ls -lh release/Islami-debug.apk
 
-      - name: Locate Android project
-        id: project
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          PROJECT=""
-
-          while IFS= read -r settings; do
-            candidate="$(dirname "$settings")"
-
-            if [ -f "$candidate/app/build.gradle" ] || \
-               [ -f "$candidate/app/build.gradle.kts" ]; then
-              PROJECT="$candidate"
-              break
-            fi
-          done < <(
-            find "$RUNNER_TEMP/islami-extract" -type f \
-              \( -name settings.gradle -o -name settings.gradle.kts \) \
-              -print | sort
-          )
-
-          if [ -z "$PROJECT" ]; then
-            echo "ERROR: Android project not found."
-            exit 1
-          fi
-
-          echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
-          echo "Android project: $PROJECT"
-
-      - name: Replace repository root
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          PROJECT="${{ steps.project.outputs.project }}"
-
-          rsync -a \
-            --exclude='.git/' \
-            --exclude='.github/' \
-            "$PROJECT/" ./
-
-          echo "Repository after extraction:"
-          find . -maxdepth 3 -type f \
-            ! -path './.git/*' | sort | head -400
-
-      - name: Check Android project
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [ -f settings.gradle.kts ]; then
-            echo "settings.gradle.kts: PASS"
-          elif [ -f settings.gradle ]; then
-            echo "settings.gradle: PASS"
-          else
-            echo "ERROR: settings.gradle(.kts) not found."
-            exit 1
-          fi
-
-          if [ -f app/build.gradle.kts ]; then
-            echo "app/build.gradle.kts: PASS"
-          elif [ -f app/build.gradle ]; then
-            echo "app/build.gradle: PASS"
-          else
-            echo "ERROR: app/build.gradle(.kts) not found."
-            exit 1
-          fi
-
-          if [ -f app/src/main/AndroidManifest.xml ]; then
-            echo "AndroidManifest.xml: PASS"
-          else
-            echo "ERROR: AndroidManifest.xml not found."
-            exit 1
-          fi
-
-          if [ -f gradlew ]; then
-            chmod +x gradlew
-            echo "Gradle wrapper: FOUND"
-            ./gradlew --version | head -20
-          else
-            echo "WARNING: gradlew not found."
-            echo "The project was extracted, but Gradle Wrapper must be added before building."
-          fi
-
-      - name: Remove source ZIP
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          rm -f "${{ steps.zip.outputs.zip }}"
-
-          echo "Source ZIP removed."
-
-      - name: Commit Islami project
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          git config user.name "github-actions[bot]"
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add -A
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-            exit 0
-          fi
-
-          git commit -m "Extract Islami Android project"
-
-          git push origin HEAD:main
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Islami-APK
+          path: release/Islami-debug.apk
+          if-no-files-found: error
+          retention-days: 30
