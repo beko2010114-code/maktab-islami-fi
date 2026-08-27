@@ -1,4 +1,4 @@
-name: Build Islami APK
+name: Build Islami Android APK
 
 on:
   workflow_dispatch:
@@ -28,69 +28,119 @@ jobs:
           gradle-version: '8.7'
 
       - name: Show project structure
+        shell: bash
         run: |
-          echo "Project files:"
+          echo "========== PROJECT STRUCTURE =========="
           find . -maxdepth 4 -type f \
-            ! -path './.git/*' | sort
+            ! -path './.git/*' | sort | head -500
 
       - name: Validate Android project
         shell: bash
         run: |
           set -euo pipefail
 
-          test -f settings.gradle.kts
-          test -f build.gradle.kts
-          test -f app/build.gradle.kts
-          test -f app/src/main/AndroidManifest.xml
+          echo "Checking Android project..."
 
+          if [ -f settings.gradle.kts ]; then
+            echo "settings.gradle.kts: PASS"
+          elif [ -f settings.gradle ]; then
+            echo "settings.gradle: PASS"
+          else
+            echo "ERROR: settings.gradle(.kts) not found."
+            exit 1
+          fi
+
+          if [ -f build.gradle.kts ]; then
+            echo "build.gradle.kts: PASS"
+          elif [ -f build.gradle ]; then
+            echo "build.gradle: PASS"
+          else
+            echo "ERROR: build.gradle(.kts) not found."
+            exit 1
+          fi
+
+          if [ -f app/build.gradle.kts ]; then
+            echo "app/build.gradle.kts: PASS"
+          elif [ -f app/build.gradle ]; then
+            echo "app/build.gradle: PASS"
+          else
+            echo "ERROR: app/build.gradle(.kts) not found."
+            exit 1
+          fi
+
+          if [ -f app/src/main/AndroidManifest.xml ]; then
+            echo "AndroidManifest.xml: PASS"
+          else
+            echo "ERROR: AndroidManifest.xml not found."
+            exit 1
+          fi
+
+          echo ""
           echo "Android project structure: PASS"
+
+      - name: Show Java and Gradle versions
+        shell: bash
+        run: |
+          echo "========== JAVA =========="
+          java -version
+
+          echo ""
+          echo "========== GRADLE =========="
+          gradle --version
+
+      - name: Clean project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Cleaning project..."
+
+          gradle --no-daemon \
+            clean
 
       - name: Build Debug APK
         shell: bash
         run: |
-          set -euo pipefail
+          set -o pipefail
+
+          echo "========================================"
+          echo "        BUILDING ISLAMI DEBUG APK"
+          echo "========================================"
 
           gradle --no-daemon \
             --stacktrace \
-            assembleDebug
+            --info \
+            assembleDebug 2>&1 | tee build.log
+
+      - name: Show build error
+        if: failure()
+        shell: bash
+        run: |
+          echo ""
+          echo "========================================"
+          echo "             BUILD ERROR"
+          echo "========================================"
+
+          echo ""
+          echo "---------- IMPORTANT ERROR ----------"
+
+          grep -n -B 20 -A 40 \
+            -E "What went wrong|Execution failed|Could not resolve|Could not find|e: |error:|FAILURE:" \
+            build.log | tail -350 || true
+
+          echo ""
+          echo "---------- LAST 200 LINES ----------"
+
+          tail -200 build.log
+
+      - name: Save build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Islami-Build-Log
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Find APK
         id: apk
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APK=$(find app/build/outputs/apk \
-            -type f \
-            -name '*.apk' \
-            -print -quit)
-
-          if [ -z "$APK" ]; then
-            echo "ERROR: APK was not generated."
-            exit 1
-          fi
-
-          echo "APK found:"
-          echo "$APK"
-
-          echo "path=$APK" >> "$GITHUB_OUTPUT"
-
-      - name: Rename APK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          mkdir -p release
-
-          cp "${{ steps.apk.outputs.path }}" \
-            "release/Islami-debug.apk"
-
-          ls -lh release/Islami-debug.apk
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Islami-APK
-          path: release/Islami-debug.apk
-          if-no-files-found: error
-          retention-days: 30
